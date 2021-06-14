@@ -91,7 +91,7 @@ def crawl(url):
     season_dict = {}
     for key in seasons_url_list.keys():
         for u in seasons_url_list[key]:
-            season_dict.update(key : crawl_episodes(u)) 
+            season_dict.update({key : crawl_episodes(u)}) 
     return classes.Serie(serie_id, titles, descriptions, genres, modify_date, season_dict)
 
 serie = crawl(url)
