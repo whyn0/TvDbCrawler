@@ -1,8 +1,10 @@
+from concurrent import futures
+import concurrent
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 import re
-from classes import *
+import classes
 
 base_url = 'https://www.thetvdb.com'
 url = 'https://www.thetvdb.com/series/la-casa-de-papel'
@@ -33,15 +35,7 @@ def crawl_index(soup):
         titles.update({d['data-language'] : d['data-title']})
         descriptions.update({d['data-language'] : d.text})
     return serie_id, titles, descriptions, genres, modify_date
-'''
-def crawl_seasons(soup):
-    url_list = []
-    li_group_seasons = soup.find('div' , {'class' : 'season_append'}).find('ul').find_all('li', {'class' : 'list-group-item'})
-    for li in li_group_seasons:
-        if li.get('data-number') is not None:
-            url_list.append(li.find('a')['href'])
-    return url_list
-'''
+
 def crawl_season_list(soup):
     season_alternatives = {}
     season_alternatives_titles = [x.text for x in soup.find_all('li' , {'role' : 'presentation'})]
@@ -60,22 +54,32 @@ def crawl_season_list(soup):
     
 
 def crawl_episodes(url):
-    print('thread start with url {}'.format(url))
     code = requests.get(url)
     plain = code.text
     soup = BeautifulSoup(plain, 'html.parser')
     season_descriptions = {x['data-language'] : x.text for x in soup.find_all('div' , {'class' : 'change_translation_text'})}
-    episodes_list = [base_url + x.find('a')['href'] for x in soup.find_all('td') if x.find('a') is not None]
-    epi_list = []
-    for episode_url in episodes_list:
-        ep_plain = requests.get(episode_url).text
+    episodes_url_list = [base_url + x.find('a')['href'] for x in soup.find_all('td') if x.find('a') is not None]
+    procs = []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        episodes_list = list(executor.map(threaded_episode_crawler, episodes_url_list))
+    return classes.Season(url[-1:] ,season_descriptions, episodes_list)
+
+
+
+def threaded_episode_crawler(url):
+    try:
+        print('thread started on url {}'.format(url))
+        ep_plain = requests.get(url).text
         ep_soup = BeautifulSoup(ep_plain, 'html.parser')
         description_div = ep_soup.find_all('div' , {'class' : 'change_translation_text'})
         ep_titles = {x['data-language'] : x['data-title'] for x in description_div}
         ep_descriptions = {x['data-language'] : x.text for x in description_div}
         originally_aired = ep_soup.find('a', href=re.compile('/on-today/\d+')).text
         duration = ep_soup.find('span', string=re.compile('\d+ \S+')).text.strip()
-        epi_list.append(classes.Episode(ep_titles, ep_descriptions, originally_aired, duration))
+        return classes.Episode(ep_titles, ep_descriptions, originally_aired, duration)
+    except Exception as e:
+        print(e)
+        return None
 
 
 def crawl(url):
@@ -84,14 +88,10 @@ def crawl(url):
     soup = BeautifulSoup(plain, 'html.parser')
     serie_id, titles, descriptions, genres, modify_date = crawl_index(soup)
     seasons_url_list = crawl_season_list(soup)
+    season_dict = {}
+    for key in seasons_url_list.keys():
+        for u in seasons_url_list[key]:
+            season_dict.update(key : crawl_episodes(u)) 
+    return classes.Serie(serie_id, titles, descriptions, genres, modify_date, season_dict)
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = []
-        for key in seasons_url_list.keys():
-            futures.append(executor.map(crawl_episodes, seasons_url_list[key]))
-        
-            
-        #executor.map(crawl_episodes, season_url_list)
-
-
-crawl(url)
+serie = crawl(url)
